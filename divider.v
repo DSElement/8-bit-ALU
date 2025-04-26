@@ -50,7 +50,7 @@ module divider (
     assign final_corrected_data[7:0] = reg_data[7:0];
 
     // Unified shifter for left shift
-    unified_shifter #(17) shifter_inst (
+    shifter #(17) shifter_inst (
         .in(reg_data),
         .direction(1'b1), // shift left
         .out(shifted_data)
