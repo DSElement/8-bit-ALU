@@ -1,5 +1,6 @@
-module dff (
+module dff(
     input wire clk,
+    input wire reset,
     input wire d,
     output wire q,
     output wire qn
@@ -7,24 +8,29 @@ module dff (
 
     wire nclk;
     wire s, r;
-    wire qm, qmn;  // master outputs
-    wire qs, qsn;  // slave outputs
+    wire qm, qmn;
+    wire qs, qsn;
+    wire d_reset;   // Data forced to 0 when reset active
 
     not (nclk, clk);
 
-    // Master latch (active when clk=0)
-    nand (s, d, nclk);
-    nand (r, ~d, nclk);
+    // reset forces d_reset = 0
+    assign d_reset = reset ? 1'b0 : d;
+
+    // Master latch (transparent when clk=0)
+    nand (s, d_reset, nclk);
+    nand (r, ~d_reset, nclk);
     nand (qm, s, qmn);
     nand (qmn, r, qm);
 
-    // Slave latch (active when clk=1)
+    // Slave latch (transparent when clk=1)
     nand (qs, qm, clk);
     nand (qsn, qmn, clk);
     nand (q, qs, qn);
     nand (qn, qsn, q);
 
 endmodule
+
 
 /*module dff (
     input wire clk,

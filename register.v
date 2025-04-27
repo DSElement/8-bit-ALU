@@ -4,19 +4,23 @@ module register #(parameter WIDTH = 8) (
     output wire [WIDTH-1:0] q
 );
 
+    wire [WIDTH-1:0] qn_unused; // <-- dummy wires for unconnected qn
+
     genvar i;
     generate
         for (i = 0; i < WIDTH; i = i + 1) begin : gen_dffs
             dff dff_inst (
                 .clk(clk),
+                .reset(1'b0), // <- add dummy reset low because your dff expects reset
                 .d(d[i]),
                 .q(q[i]),
-                .qn()  // we don't care about qn here
+                .qn(qn_unused[i])
             );
         end
     endgenerate
 
 endmodule
+
 
 `timescale 1ns/1ps
 
