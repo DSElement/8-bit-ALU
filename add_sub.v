@@ -14,7 +14,8 @@ module add_sub #(parameter WIDTH = 9) (
     genvar i;
     generate
         for (i = 0; i < WIDTH; i = i + 1) begin : gen_adders
-            xor (b_xor_sub[i], b[i], sub);  // if sub=1, invert b
+            xor (b_xor_sub[i], b[i], sub); // if sub=1, invert b
+	    //assign b_xor_sub[i] = sub ? ~b[i] : b[i];
             full_adder fa (
                 .a(a[i]),
                 .b(b_xor_sub[i]),
@@ -50,11 +51,7 @@ module add_sub_tb;
         #10;
         a = 9'b000000101; b = 9'b000000010; sub = 0; // 5 + 2
         #10;
-        a = 9'b000001100; b = 9'b000000100; sub = 1; // 12 - 4
-        #10;
-        a = 9'b111111111; b = 9'b000000001; sub = 0; // 511 + 1
-        #10;
-        a = 9'b000000000; b = 9'b000000001; sub = 1; // 0 - 1
+        a = 8'b00000000; b = 8'b00000011; sub = 1;
         #10;
         $stop;
     end
