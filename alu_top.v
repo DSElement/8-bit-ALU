@@ -1,251 +1,215 @@
 module alu_top (
     input wire clk,
     input wire reset,
-    input wire begin_op,
-    input wire [1:0] opcode,     // 00 = add, 01 = sub, 10 = mul, 11 = div
-    input wire [7:0] a,           // Operand A
-    input wire [7:0] b,           // Operand B
-    output wire [15:0] result,    // Final result (Product, Quotient, Sum/Diff)
-    output wire done              // Operation complete signal
+    input wire start,
+    input wire [1:0] op_code,         // 00 add, 01 sub, 10 mul, 11 div
+    input wire [7:0] operand_A,
+    input wire [7:0] operand_B,
+    output wire [15:0] alu_result,
+    output wire alu_done
 );
 
-    // ========================
-    // Internal wires
-    // ========================
-    wire booth_load, booth_shift_en, booth_add_en, booth_sub_en, booth_count_en;
-    wire div_load, div_shift_en, div_add_en, div_sub_en, div_final_add, div_count_en;
-    wire alu_done;
-    wire booth_done, div_done;
+    // Control signals
+    wire load_operands;
+    wire adder_en;
+    wire subtractor_en;
+    wire booth_start;
+    wire divider_start;
+    wire booth_done;
+    wire divider_done;
+
+    // Outputs from Booth and Divider
     wire [15:0] booth_product;
-    wire [7:0] div_quotient, div_remainder;
-    wire [15:0] add_sub_result;
-    wire [16:0] booth_reg_data, div_reg_data;
+    wire [7:0] divider_quotient;
+    wire [7:0] divider_remainder;
 
-    // Booth control signals for add/sub decision
-    wire booth_Q0, booth_Qm1;
-    assign booth_Q0 = booth_reg_data[1];
-    assign booth_Qm1 = booth_reg_data[0];
+    // Adder/Subtractor output
+    wire [7:0] add_sub_result;
 
-    // Divider remainder sign
-    wire div_R_sign;
-    assign div_R_sign = div_reg_data[16]; // MSB of remainder
+    // Result options to MUX
+    wire [15:0] add_sub_result_extended;
+    wire [15:0] div_concat_result;
+    //wire [3*16-1:0] result_options; // Flattened bus for 3 options
+    wire [4*16-1:0] result_options;
 
-    // ========================
+
     // Control Unit
-    // ========================
-    control_unit CU (
+    control_unit control_unit_inst (
         .clk(clk),
         .reset(reset),
-        .begin_op(begin_op),
-        .opcode(opcode),
+        .start(start),
+        .op_code(op_code),
         .booth_done(booth_done),
-        .div_done(div_done),
-        .booth_Q0(booth_Q0),
-        .booth_Qm1(booth_Qm1),
-        .div_R_sign(div_R_sign),
-        .booth_load(booth_load),
-        .booth_shift_en(booth_shift_en),
-        .booth_add_en(booth_add_en),
-        .booth_sub_en(booth_sub_en),
-        .booth_count_en(booth_count_en),
-        .div_load(div_load),
-        .div_shift_en(div_shift_en),
-        .div_add_en(div_add_en),
-        .div_sub_en(div_sub_en),
-        .div_final_add(div_final_add),
-        .div_count_en(div_count_en),
+        .divider_done(divider_done),
+        .adder_en(adder_en),
+        .subtractor_en(subtractor_en),
+        .booth_start(booth_start),
+        .divider_start(divider_start),
+        .load_operands(load_operands),
         .alu_done(alu_done)
     );
 
-    // ========================
-    // Booth Multiplier
-    // ========================
-    booth booth_multiplier (
+    // Booth Top (for multiplication)
+    booth_top booth_inst (
         .clk(clk),
         .reset(reset),
-        .load(booth_load),
-        .shift_en(booth_shift_en),
-        .add_en(booth_add_en),
-        .sub_en(booth_sub_en),
-        .count_en(booth_count_en),
-        .multiplicand(a),
-        .multiplier(b),
+        .start(booth_start),
+        .multiplicand(operand_A),
+        .multiplier(operand_B),
         .product(booth_product),
-        .done(booth_done),
-        .reg_data(booth_reg_data)   // Export reg_data for Q0, Q-1 reading
+        .booth_done(booth_done)
     );
 
-    // ========================
-    // Divider
-    // ========================
-    divider divider_unit (
+    // Divider Top (for division)
+    divider_top divider_inst (
         .clk(clk),
         .reset(reset),
-        .load(div_load),
-        .shift_en(div_shift_en),
-        .add_en(div_add_en),
-        .sub_en(div_sub_en),
-        .final_add(div_final_add),
-        .count_en(div_count_en),
-        .dividend(a),
-        .divisor(b),
-        .quotient(div_quotient),
-        .remainder(div_remainder),
-        .done(div_done),
-        .reg_data(div_reg_data)   // Export reg_data for sign reading
+        .start(divider_start),
+        .dividend(operand_A),
+        .divisor(operand_B),
+        .quotient(divider_quotient),
+        .remainder(divider_remainder),
+        .divider_done(divider_done)
     );
 
-    // ========================
-    // Add/Sub (structural)
-    // ========================
-
-    add_sub #(16) adder_subtractor ( // use 16 not 9
-        .a({8'b0, a}),
-        .b({8'b0, b}),
-        .sub(opcode[0]),
+    // Adder/Subtractor (for ADD and SUB)
+    add_sub #(8) add_sub_inst (
+        .a(operand_A),
+        .b(operand_B),
+        //.sub(subtractor_en), // sub=0 for add, sub=1 for subtract
+	.sub(op_code[0]), // sub=0 for ADD, sub=1 for SUB
         .sum(add_sub_result)
     );
 
+    // Extend ADD/SUB result to 16 bits (zero extension)
+    assign add_sub_result_extended = {8'b0, add_sub_result};
 
-    // ========================
-    // Result MUX
-    // ========================
-    wire [15:0] mux_inputs [3:0];
+    // Concatenate Quotient and Remainder (for division result)
+    assign div_concat_result = {divider_remainder, divider_quotient}; // [15:8] = remainder, [7:0] = quotient
 
-    assign mux_inputs[0] = add_sub_result;
-    assign mux_inputs[1] = booth_product;
-    assign mux_inputs[2] = {8'b0, div_quotient};
-    assign mux_inputs[3] = 16'b0; // Reserved (could be remainder or 0)
+    // Prepare inputs for MUX
+    //assign result_options = {booth_product, div_concat_result, add_sub_result_extended};
+    assign result_options = {div_concat_result, booth_product, add_sub_result_extended, add_sub_result_extended};
 
-    /*mux #(16, 4) result_mux (
-        .in({mux_inputs[3], mux_inputs[2], mux_inputs[1], mux_inputs[0]}),
-        .sel(opcode),
-        .out(result)
-    );*/
 
-    mux #(16, 4) result_mux (
-        .in({{8'b0, div_quotient}, booth_product, add_sub_result, add_sub_result}),
-        .sel(opcode),
-        .out(result)
+    // MUX: Select correct result based on op_code
+    mux #(
+        .WIDTH(16),
+        .N(4)
+    ) result_mux (
+        .in(result_options),
+        .sel(op_code),
+        .out(alu_result)
     );
-
-
-    //assign done = alu_done;
-    assign done = (opcode == 2'b00 || opcode == 2'b01) ? 1'b1 : alu_done;
 
 endmodule
 
-`timescale 1ns/1ps
+`timescale 1ns / 1ps
 
 module alu_top_tb;
 
+    // Inputs
     reg clk;
     reg reset;
-    reg begin_op;
-    reg [1:0] opcode;
-    reg [7:0] a, b;
-    wire [15:0] result;
-    wire done;
+    reg start;
+    reg [1:0] op_code;
+    reg [7:0] operand_A;
+    reg [7:0] operand_B;
 
-    alu_top DUT (
+    // Outputs
+    wire [15:0] alu_result;
+    wire alu_done;
+
+    // Instantiate alu_top
+    alu_top uut (
         .clk(clk),
         .reset(reset),
-        .begin_op(begin_op),
-        .opcode(opcode),
-        .a(a),
-        .b(b),
-        .result(result),
-        .done(done)
+        .start(start),
+        .op_code(op_code),
+        .operand_A(operand_A),
+        .operand_B(operand_B),
+        .alu_result(alu_result),
+        .alu_done(alu_done)
     );
 
-    // Clock generator
+    // Clock generation
     initial begin
         clk = 0;
-        forever #5 clk = ~clk; // 10 ns clock period
+        forever #5 clk = ~clk; // 10ns clock
     end
 
+    // Stimulus
     initial begin
-    $display("Time | Opcode | A | B | Result | Done | booth_load booth_shift_en booth_add_en booth_sub_en booth_count_en");
-    $monitor("%4t | %b | %d | %d | %d | %b | %b %b %b %b %b",
-        $time, opcode, a, b, result, done,
-        DUT.booth_multiplier.load,
-        DUT.booth_multiplier.shift_en,
-        DUT.booth_multiplier.add_en,
-        DUT.booth_multiplier.sub_en,
-        DUT.booth_multiplier.count_en
-    );
-end
-
-
-    // Test sequence
-    initial begin
-        //$display("Time | Opcode | A | B | Result | Done");
-        //$monitor("%4t | %b | %d | %d | %d | %b", $time, opcode, a, b, result, done);
-
-        // Global reset
+        // Initialize
         reset = 1;
-        begin_op = 0;
-        a = 0;
-        b = 0;
-        opcode = 2'b00;
+        start = 0;
+        op_code = 2'b00;
+        operand_A = 0;
+        operand_B = 0;
+
         #20;
         reset = 0;
 
-        // =========================
-        // Test 1: ADD (5 + 3 = 8)
-        // =========================
-        a = 8'd5;
-        b = 8'd3;
-        opcode = 2'b00; // ADD
-	#10
-        begin_op = 1;
-        #20 begin_op = 0; // Pulse
-        wait (done);
-        #20;
-	reset = 1; #10; reset = 0; #10; // <- Reset between operations
+        // ======== Test ADD (00) ========
+        #10;
+        operand_A = 8'd20;
+        operand_B = 8'd15;
+        op_code = 2'b00; // ADD
+        start = 1;
+        #10;
+        start = 0;
 
-        // =========================
-        // Test 2: SUB (10 - 4 = 6)
-        // =========================
-        a = 8'd10;
-        b = 8'd4;
-        opcode = 2'b01; // SUB
-	#10
-        begin_op = 1;
-        #20 begin_op = 0;
-        wait (done);
+        // Wait until alu_done
+        wait (alu_done == 1);
         #20;
-	reset = 1; #10; reset = 0; #10; // <- Reset between operations
+        $display("ADD Result: %d", alu_result);
 
-        // =========================
-        // Test 3: MUL (7 * 3 = 21)
-        // =========================
-        a = 8'd7;
-        b = 8'd3;
-        opcode = 2'b10; // MUL
-	#10
-        begin_op = 1;
-        #20 begin_op = 0;
-        wait (done);
+        // ======== Test SUB (01) ========
+        #50;
+        operand_A = 8'd30;
+        operand_B = 8'd10;
+        op_code = 2'b01; // SUB
+        start = 1;
+        #10;
+        start = 0;
+
+        wait (alu_done == 1);
         #20;
-	reset = 1; #10; reset = 0; #10; // <- Reset between operations
+        $display("SUB Result: %d", alu_result);
 
-        // =========================
-        // Test 4: DIV (20 / 3 = 6 quotient)
-        // =========================
-        a = 8'd20;
-        b = 8'd3;
-        opcode = 2'b11; // DIV
-	#10
-        begin_op = 1;
-        #20 begin_op = 0;
-        wait (done);
+        // ======== Test MUL (10) ========
+        #50;
+        operand_A = 8'd7;
+        operand_B = 8'd6;
+        op_code = 2'b10; // MUL
+        start = 1;
+        #10;
+        start = 0;
+
+        wait (alu_done == 1);
         #20;
-	reset = 1; #10; reset = 0; #10; // <- Reset between operations
+        $display("MUL Result: %d", alu_result);
 
-        // Finish
-        $stop;
+        // ======== Test DIV (11) ========
+        #50;
+        operand_A = 8'd200;
+        operand_B = 8'd13;
+        op_code = 2'b11; // DIV
+        start = 1;
+        #10;
+        start = 0;
+
+        wait (alu_done == 1);
+        #20;
+        $display("DIV Result (Remainder<<8 | Quotient): 0x%h", alu_result);
+        $display("-> Quotient: %d", alu_result[7:0]);
+        $display("-> Remainder: %d", alu_result[15:8]);
+
+        // Finish simulation
+        #100;
+        $finish;
     end
 
 endmodule
+
 

@@ -1,199 +1,186 @@
 module control_unit (
     input wire clk,
     input wire reset,
-    input wire begin_op,
-    input wire [1:0] opcode,    // 00 = add, 01 = sub, 10 = mul, 11 = div
+    input wire start,
+    input wire [1:0] op_code,   // 00 add, 01 sub, 10 mul, 11 div
     input wire booth_done,
-    input wire div_done,
-    input wire booth_Q0,
-    input wire booth_Qm1,
-    input wire div_R_sign,
-    output wire booth_load,
-    output wire booth_shift_en,
-    output wire booth_add_en,
-    output wire booth_sub_en,
-    output wire booth_count_en,
-    output wire div_load,
-    output wire div_shift_en,
-    output wire div_add_en,
-    output wire div_sub_en,
-    output wire div_final_add,
-    output wire div_count_en,
+    input wire divider_done,
+    output wire adder_en,
+    output wire subtractor_en,
+    output wire booth_start,
+    output wire divider_start,
+    output wire load_operands,
     output wire alu_done
 );
 
-    // One-hot State Encoding
-    wire IDLE, MUL_LOAD, MUL_OP, MUL_SHIFT, MUL_DONE;
-    wire DIV_LOAD, DIV_SHIFT, DIV_OP, DIV_FINAL, DIV_DONE;
+    // State encoding (one-hot)
+    localparam IDLE        = 9'b000000001;
+    localparam LOAD        = 9'b000000010;
+    localparam ADD_EXEC    = 9'b000000100;
+    localparam SUB_EXEC    = 9'b000001000;
+    localparam MUL_EXEC    = 9'b000010000;
+    localparam WAIT_MUL    = 9'b000100000;
+    localparam DIV_EXEC    = 9'b001000000;
+    localparam WAIT_DIV    = 9'b010000000;
+    localparam DONE        = 9'b100000000;
 
-    // Next state wires
-    wire next_IDLE, next_MUL_LOAD, next_MUL_OP, next_MUL_SHIFT, next_MUL_DONE;
-    wire next_DIV_LOAD, next_DIV_SHIFT, next_DIV_OP, next_DIV_FINAL, next_DIV_DONE;
+    wire [8:0] current_state;
+    wire [8:0] next_state;
 
-    wire unused_qn[9:0]; // dummy wires for qn outputs
+    // State register
+    register #(9) state_reg (
+        .clk(clk),
+        .d(next_state),
+        .q(current_state)
+    );
 
-    // State Registers (one DFF per state)
-    dff dff_IDLE     (.clk(clk), .reset(reset), .d(next_IDLE),      .q(IDLE),     .qn(unused_qn[0]));
-    dff dff_MUL_LOAD (.clk(clk), .reset(reset), .d(next_MUL_LOAD),   .q(MUL_LOAD), .qn(unused_qn[1]));
-    dff dff_MUL_OP   (.clk(clk), .reset(reset), .d(next_MUL_OP),     .q(MUL_OP),   .qn(unused_qn[2]));
-    dff dff_MUL_SHIFT(.clk(clk), .reset(reset), .d(next_MUL_SHIFT),  .q(MUL_SHIFT),.qn(unused_qn[3]));
-    dff dff_MUL_DONE (.clk(clk), .reset(reset), .d(next_MUL_DONE),   .q(MUL_DONE), .qn(unused_qn[4]));
-    dff dff_DIV_LOAD (.clk(clk), .reset(reset), .d(next_DIV_LOAD),   .q(DIV_LOAD), .qn(unused_qn[5]));
-    dff dff_DIV_SHIFT(.clk(clk), .reset(reset), .d(next_DIV_SHIFT),  .q(DIV_SHIFT),.qn(unused_qn[6]));
-    dff dff_DIV_OP   (.clk(clk), .reset(reset), .d(next_DIV_OP),     .q(DIV_OP),   .qn(unused_qn[7]));
-    dff dff_DIV_FINAL(.clk(clk), .reset(reset), .d(next_DIV_FINAL),  .q(DIV_FINAL),.qn(unused_qn[8]));
-    dff dff_DIV_DONE (.clk(clk), .reset(reset), .d(next_DIV_DONE),   .q(DIV_DONE), .qn(unused_qn[9]));
+    // Next-state logic
+    assign next_state = (reset) ? IDLE :
+                        (current_state == IDLE)     ? (start ? LOAD : IDLE) :
+                        (current_state == LOAD)     ? 
+                            (op_code == 2'b00 ? ADD_EXEC :
+                             op_code == 2'b01 ? SUB_EXEC :
+                             op_code == 2'b10 ? MUL_EXEC :
+                             DIV_EXEC) :
+                        (current_state == ADD_EXEC)  ? DONE :
+                        (current_state == SUB_EXEC)  ? DONE :
+                        (current_state == MUL_EXEC)  ? WAIT_MUL :
+                        (current_state == WAIT_MUL)  ? (booth_done ? DONE : WAIT_MUL) :
+                        (current_state == DIV_EXEC)  ? WAIT_DIV :
+                        (current_state == WAIT_DIV)  ? (divider_done ? DONE : WAIT_DIV) :
+                        (current_state == DONE)      ? IDLE :
+                        IDLE; // fallback
 
-    // ===============================
-    // Next State Logic
-    // ===============================
-
-    // IDLE Transitions
-    assign next_MUL_LOAD = IDLE & begin_op & (opcode == 2'b10);
-    assign next_DIV_LOAD = IDLE & begin_op & (opcode == 2'b11);
-    assign next_IDLE = (MUL_DONE | DIV_DONE);
-
-    // Multiplication Transitions
-    assign next_MUL_OP = MUL_LOAD | (MUL_SHIFT & ~booth_done);
-    assign next_MUL_SHIFT = MUL_OP;
-    assign next_MUL_DONE = MUL_SHIFT & booth_done;
-
-    // Division Transitions
-    assign next_DIV_SHIFT = DIV_LOAD | (DIV_OP & ~div_done);
-    assign next_DIV_OP = DIV_SHIFT;
-    assign next_DIV_FINAL = DIV_OP & div_done;
-    assign next_DIV_DONE = DIV_FINAL;
-
-    // ===============================
-    // Outputs based on current state + conditions
-    // ===============================
-
-    assign booth_load     = MUL_LOAD;
-    assign booth_shift_en = MUL_SHIFT;
-    assign booth_count_en = MUL_SHIFT;
-
-    // Booth Add/Sub Control
-    assign booth_add_en = MUL_OP & (~booth_Q0 & booth_Qm1); // 01 => Add
-    assign booth_sub_en = MUL_OP & (booth_Q0 & ~booth_Qm1); // 10 => Sub
-
-    assign div_load       = DIV_LOAD;
-    assign div_shift_en   = DIV_SHIFT;
-    assign div_count_en   = DIV_SHIFT;
-
-    // Divider Add/Sub Control
-    assign div_sub_en = DIV_OP & ~div_R_sign; // R >= 0 => Subtract
-    assign div_add_en = DIV_OP & div_R_sign;  // R < 0  => Add
-
-    assign div_final_add  = DIV_FINAL;
-    assign alu_done       = MUL_DONE | DIV_DONE;
+    // Output logic
+    assign load_operands = (current_state == LOAD);
+    assign adder_en      = (current_state == ADD_EXEC);
+    assign subtractor_en = (current_state == SUB_EXEC);
+    assign booth_start   = (current_state == MUL_EXEC);
+    assign divider_start = (current_state == DIV_EXEC);
+    assign alu_done      = (current_state == DONE);
 
 endmodule
 
+`timescale 1ns / 1ps
 
-/*module control_unit (
-    input wire clk,
-    input wire reset,
-    input wire begin_op,
-    input wire [1:0] opcode,    // 00 = add, 01 = sub, 10 = mul, 11 = div
-    input wire booth_done,
-    input wire div_done,
-    input wire booth_Q0,
-    input wire booth_Qm1,
-    input wire div_R_sign,
-    output wire booth_load,
-    output wire booth_shift_en,
-    output wire booth_add_en,
-    output wire booth_sub_en,
-    output wire booth_count_en,
-    output wire div_load,
-    output wire div_shift_en,
-    output wire div_add_en,
-    output wire div_sub_en,
-    output wire div_final_add,
-    output wire div_count_en,
-    output wire alu_done
-);
+module control_unit_tb;
 
-    // One-hot State Encoding
-    wire IDLE, MUL_LOAD, MUL_OP, MUL_SHIFT, MUL_DONE;
-    wire DIV_LOAD, DIV_SHIFT, DIV_OP, DIV_FINAL, DIV_DONE;
+    // Inputs
+    reg clk;
+    reg reset;
+    reg start;
+    reg [1:0] op_code;
+    reg booth_done;
+    reg divider_done;
 
-    // Next state wires
-    wire next_IDLE, next_MUL_LOAD, next_MUL_OP, next_MUL_SHIFT, next_MUL_DONE;
-    wire next_DIV_LOAD, next_DIV_SHIFT, next_DIV_OP, next_DIV_FINAL, next_DIV_DONE;
+    // Outputs
+    wire adder_en;
+    wire subtractor_en;
+    wire booth_start;
+    wire divider_start;
+    wire load_operands;
+    wire alu_done;
 
-    // State Registers (one DFF per state)
-    dff dff_IDLE(clk, reset ? 1'b1 : next_IDLE, IDLE);
-    dff dff_MUL_LOAD(clk, reset ? 1'b0 : next_MUL_LOAD, MUL_LOAD);
-    dff dff_MUL_OP(clk, reset ? 1'b0 : next_MUL_OP, MUL_OP);
-    dff dff_MUL_SHIFT(clk, reset ? 1'b0 : next_MUL_SHIFT, MUL_SHIFT);
-    dff dff_MUL_DONE(clk, reset ? 1'b0 : next_MUL_DONE, MUL_DONE);
-    dff dff_DIV_LOAD(clk, reset ? 1'b0 : next_DIV_LOAD, DIV_LOAD);
-    dff dff_DIV_SHIFT(clk, reset ? 1'b0 : next_DIV_SHIFT, DIV_SHIFT);
-    dff dff_DIV_OP(clk, reset ? 1'b0 : next_DIV_OP, DIV_OP);
-    dff dff_DIV_FINAL(clk, reset ? 1'b0 : next_DIV_FINAL, DIV_FINAL);
-    dff dff_DIV_DONE(clk, reset ? 1'b0 : next_DIV_DONE, DIV_DONE);
+    // Instantiate the Control Unit
+    control_unit uut (
+        .clk(clk),
+        .reset(reset),
+        .start(start),
+        .op_code(op_code),
+        .booth_done(booth_done),
+        .divider_done(divider_done),
+        .adder_en(adder_en),
+        .subtractor_en(subtractor_en),
+        .booth_start(booth_start),
+        .divider_start(divider_start),
+        .load_operands(load_operands),
+        .alu_done(alu_done)
+    );
 
-    // ===============================
-    // Next State Logic
-    // ===============================
+    // Clock generator
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk; // 10ns clock
+    end
 
-    // IDLE Transitions
-    assign next_MUL_LOAD = IDLE & begin_op & (opcode == 2'b10);
-    assign next_DIV_LOAD = IDLE & begin_op & (opcode == 2'b11);
-    assign next_IDLE = (MUL_DONE | DIV_DONE);
+    // Test sequence
+    initial begin
+        // Initialize
+        reset = 1;
+        start = 0;
+        op_code = 2'b00;
+        booth_done = 0;
+        divider_done = 0;
 
-    // Multiplication Transitions
-    assign next_MUL_OP = MUL_LOAD | (MUL_SHIFT & ~booth_done);
-    assign next_MUL_SHIFT = MUL_OP;
-    assign next_MUL_DONE = MUL_SHIFT & booth_done;
+        #20;
+        reset = 0;
 
-    // Division Transitions
-    assign next_DIV_SHIFT = DIV_LOAD | (DIV_OP & ~div_done);
-    assign next_DIV_OP = DIV_SHIFT;
-    assign next_DIV_FINAL = DIV_OP & div_done;
-    assign next_DIV_DONE = DIV_FINAL;
+        // ======== Test ADD Operation (00) ========
+        #10;
+        op_code = 2'b00; // ADD
+        start = 1;
+        #10;
+        start = 0;
 
-    // ===============================
-    // Outputs based on current state + conditions
-    // ===============================
+        #50; // Let FSM run through ADD
 
-    assign booth_load     = MUL_LOAD;
-    assign booth_shift_en = MUL_SHIFT;
-    assign booth_count_en = MUL_SHIFT;
+        // ======== Test SUB Operation (01) ========
+        #20;
+        op_code = 2'b01; // SUB
+        start = 1;
+        #10;
+        start = 0;
 
-    // Booth Add/Sub Control
-    assign booth_add_en = MUL_OP & (~booth_Q0 & booth_Qm1); // 01 => Add
-    assign booth_sub_en = MUL_OP & (booth_Q0 & ~booth_Qm1); // 10 => Sub
+        #50; // Let FSM run through SUB
 
-    assign div_load       = DIV_LOAD;
-    assign div_shift_en   = DIV_SHIFT;
-    assign div_count_en   = DIV_SHIFT;
+        // ======== Test MUL Operation (10) ========
+        #20;
+        op_code = 2'b10; // MUL
+        start = 1;
+        #10;
+        start = 0;
 
-    // Divider Add/Sub Control
-    assign div_sub_en = DIV_OP & ~div_R_sign; // R >= 0 => Subtract
-    assign div_add_en = DIV_OP & div_R_sign;  // R < 0  => Add
+        // Wait some time, then simulate booth_done
+        #50;
+        booth_done = 1;
+        #10;
+        booth_done = 0;
 
-    assign div_final_add  = DIV_FINAL;
-    assign alu_done       = MUL_DONE | DIV_DONE;
+        #50;
 
-endmodule*/
+        // ======== Test DIV Operation (11) ========
+        #20;
+        op_code = 2'b11; // DIV
+        start = 1;
+        #10;
+        start = 0;
 
-/*
-// ==============================
-// DFF Module (structural)
-// ==============================
-module dff (
-    input wire clk,
-    input wire d,
-    output wire q
-);
+        // Wait some time, then simulate divider_done
+        #50;
+        divider_done = 1;
+        #10;
+        divider_done = 0;
 
-    reg q_reg;
-    assign q = q_reg;
+        #100;
+        $finish;
+    end
 
-    always @(posedge clk)
-        q_reg <= d;
+    // Monitor important stuff
+    initial begin
+        $monitor("TIME=%0t | start=%b op_code=%b booth_done=%b divider_done=%b || load_operands=%b adder_en=%b subtractor_en=%b booth_start=%b divider_start=%b alu_done=%b",
+            $time,
+            start,
+            op_code,
+            booth_done,
+            divider_done,
+            load_operands,
+            adder_en,
+            subtractor_en,
+            booth_start,
+            divider_start,
+            alu_done
+        );
+    end
 
 endmodule
-*/
+

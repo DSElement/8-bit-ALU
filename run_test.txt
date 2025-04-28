@@ -1,0 +1,28 @@
+# add all Verilog source files, separated by spaces
+set sourcefiles {full_adder.v add_sub.v dff.v register.v counter.v shifter.v alu_top.v booth.v control_unit.v divider.v mux.v booth_fsm.v booth_top.v divider_fsm.v divider_top.v}
+
+# set name of the top module
+set topmodule alu_top_tb
+
+###################################################
+#####DO NOT MODIFY THE SCRIPT BELLOW THIS LINE#####
+###################################################
+
+# quit current simulation if any
+quit -sim
+
+# empty the work library if present
+if [file exists "work"] {vdel -all}
+#create a new work library
+vlib work
+
+# run the compiler
+if [catch "eval vlog $sourcefiles"] {
+    puts "correct the compilation errors"
+    return
+}
+
+vsim -voptargs=+acc $topmodule
+
+run -all
+quit -sim
