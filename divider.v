@@ -20,8 +20,12 @@ module divider (
     wire [7:0] addsub_result;
     wire [2:0] count;
     wire [7:0] R, Q;
-    wire sign_R;
+    //wire sign_R;
     wire [15:0] final_corrected_data;
+
+    wire sign_rem;
+    assign sign_rem = internal_reg_data[15]; // MSB of R (R[7])
+
 
     // Split reg_data
     assign R = internal_reg_data[15:8];
@@ -71,7 +75,7 @@ module divider (
 			   load        ? load_value :
                            (add_en | sub_en) ? {addsub_result, internal_reg_data[7:1], ~addsub_result[7]} :
                            shift_en    ? shifted_data :
-                           final_add   ? final_corrected_data :
+                           (final_add && sign_rem)   ? final_corrected_data :
                            internal_reg_data;
 
     register #(16) reg_RQ (
