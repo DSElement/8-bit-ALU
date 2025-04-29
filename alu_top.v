@@ -115,22 +115,23 @@ module alu_top (
     output wire alu_done
 );
 
-    // Internal wires
+    // Internal control wires
     wire adder_en;
     wire subtractor_en;
     wire booth_load, booth_add_en, booth_sub_en, booth_shift_en, booth_count_en;
     wire divider_load, divider_add_en, divider_sub_en, divider_shift_en, divider_count_en, divider_final_add;
 
+    // Datapath wires
     wire [15:0] booth_product;
     wire [7:0] divider_quotient;
     wire [7:0] divider_remainder;
-
     wire [7:0] add_sub_result;
+
+    wire [15:0] booth_product_bus;
     wire [15:0] add_sub_result_extended;
     wire [15:0] div_concat_result;
-    wire [3:0] mux_sel;
 
-    wire [1:0] booth_bits;             // {Q[0], Q-1}
+    wire [1:0] booth_bits;
     wire booth_counter_done;
     wire divider_sign_R;
     wire divider_counter_done;
@@ -138,9 +139,8 @@ module alu_top (
     wire [16:0] booth_reg_data;
     wire [15:0] divider_reg_data;
 
-
-
-    // Create flattened input bus for mux
+    // MUX flattened input wires
+    wire [15:0] option0, option1, option2, option3;
     wire [4*16-1:0] result_options;
 
     // ========== CONTROL UNIT ==========
@@ -182,8 +182,7 @@ module alu_top (
         .multiplier(operand_B),
         .product(booth_product),
         .done(booth_counter_done),
-        //.reg_data({booth_bits, booth_product[14:0]}) // {Q0, Q-1, rest of product} (adapt reg_data slicing if needed)
-	.reg_data(booth_reg_data)
+        .reg_data(booth_reg_data)
     );
 
     // ========== Divider Datapath ==========
@@ -201,8 +200,7 @@ module alu_top (
         .quotient(divider_quotient),
         .remainder(divider_remainder),
         .done(divider_counter_done),
-        //.reg_data({divider_sign_R, divider_remainder, divider_quotient[6:0]}) // {Sign R, R[7:0], Q[7:1]}
-	.reg_data(divider_reg_data)
+        .reg_data(divider_reg_data)
     );
 
     // ========== ADD/SUB ==========
@@ -213,15 +211,55 @@ module alu_top (
         .sum(add_sub_result)
     );
 
-    assign booth_bits = booth_reg_data[1:0];
-    assign divider_sign_R = divider_reg_data[15]; // R MSB
+    // ===================
+    // Structural connections
+    // ===================
 
-    assign add_sub_result_extended = {8'b0, add_sub_result};
-    assign div_concat_result = {divider_remainder, divider_quotient};
+    // booth_bits from booth_reg_data
+    buf (booth_bits[0], booth_reg_data[0]);
+    buf (booth_bits[1], booth_reg_data[1]);
 
-    assign result_options = {div_concat_result, booth_product, add_sub_result_extended, add_sub_result_extended};
+    // divider_sign_R from divider_reg_data[15]
+    buf (divider_sign_R, divider_reg_data[15]);
 
-    // ========== MUX for selecting result ==========
+    // Expand add_sub_result_extended
+    genvar i;
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : extend_addsub
+            buf (add_sub_result_extended[i], add_sub_result[i]);
+            buf (add_sub_result_extended[i+8], 1'b0); // Upper 8 bits zero
+        end
+    endgenerate
+
+    // Expand div_concat_result
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : concat_div
+            buf (div_concat_result[i+8], divider_remainder[i]); // high byte
+            buf (div_concat_result[i], divider_quotient[i]);    // low byte
+        end
+    endgenerate
+
+    // booth_product bus
+    generate
+        for (i = 0; i < 16; i = i + 1) begin : booth_prod_copy
+            buf (booth_product_bus[i], booth_product[i]);
+        end
+    endgenerate
+
+    // Create options for the MUX
+    generate
+        for (i = 0; i < 16; i = i + 1) begin : options_mux
+            buf (option0[i], add_sub_result_extended[i]); // ADD/SUB (option 0)
+            buf (option1[i], add_sub_result_extended[i]); // ADD/SUB (option 1 again, for SUB)
+            buf (option2[i], booth_product_bus[i]);       // MUL (Booth)
+            buf (option3[i], div_concat_result[i]);       // DIV
+        end
+    endgenerate
+
+    // Flatten options into single bus
+    assign result_options = {option3, option2, option1, option0};
+
+    // ========== Result MUX ==========
     mux #(
         .WIDTH(16),
         .N(4)
@@ -233,24 +271,17 @@ module alu_top (
 
 endmodule
 
-
-`timescale 1ns / 1ps
+`timescale 1ns/1ps
 
 module alu_top_tb;
 
-    // Inputs
-    reg clk;
-    reg reset;
-    reg start;
+    reg clk, reset, start;
     reg [1:0] op_code;
-    reg [7:0] operand_A;
-    reg [7:0] operand_B;
-
-    // Outputs
+    reg [7:0] operand_A, operand_B;
     wire [15:0] alu_result;
     wire alu_done;
 
-    // Instantiate alu_top
+    // Instantiate ALU
     alu_top uut (
         .clk(clk),
         .reset(reset),
@@ -262,82 +293,68 @@ module alu_top_tb;
         .alu_done(alu_done)
     );
 
-    // Clock generation
+    // Clock generation: 10ns clock (period)
     initial begin
         clk = 0;
-        forever #5 clk = ~clk; // 10ns clock
+        forever #5 clk = ~clk;
     end
 
-    // Stimulus
     initial begin
-        // Initialize
+        // Monitor key signals
+        //$monitor("T=%0t | reset=%b start=%b op_code=%b | operand_A=%h operand_B=%h | alu_result=%h | alu_done=%b",
+                  //$time, reset, start, op_code, operand_A, operand_B, alu_result, alu_done);
+
+	$monitor("T=%0t | reset=%b start=%b op_code=%b | operand_A=%0d operand_B=%0d | alu_result=%0d | alu_done=%b",
+        $time, reset, start, op_code, operand_A, operand_B, alu_result, alu_done);
+
+        // Initial values
         reset = 1;
         start = 0;
         op_code = 2'b00;
-        operand_A = 0;
-        operand_B = 0;
+        operand_A = 8'h00;
+        operand_B = 8'h00;
 
+        // Apply Reset
+        #20 reset = 0;
+
+        // ========== Test ADD ==========
+        #10 operand_A = 8'd15;
+            operand_B = 8'd10;
+            op_code = 2'b00; // ADD
+            start = 1;
+        #10 start = 0;
+        wait (alu_done);
         #20;
-        reset = 0;
 
-        // ======== Test ADD (00) ========
-        #10;
-        operand_A = 8'd33;
-        operand_B = 8'd25;
-        op_code = 2'b00; // ADD
-        start = 1;
-        #10;
-        start = 0;
-
-        // Wait until alu_done
-        wait (alu_done == 1);
-        #20;
-        $display("ADD Result: %d", alu_result);
-
-        // ======== Test SUB (01) ========
-        #50;
-        operand_A = 8'd30;
+        // ========== Test SUB ==========
+        operand_A = 8'd25;
         operand_B = 8'd10;
         op_code = 2'b01; // SUB
         start = 1;
-        #10;
-        start = 0;
-
-        wait (alu_done == 1);
+        #10 start = 0;
+        wait (alu_done);
         #20;
-        $display("SUB Result: %d", alu_result);
 
-        // ======== Test MUL (10) ========
-        #50;
-        operand_A = 8'd69;
+        // ========== Test MUL (Booth Multiplication) ==========
+        operand_A = 8'd5;
         operand_B = 8'd6;
         op_code = 2'b10; // MUL
         start = 1;
-        #10;
-        start = 0;
-
-        wait (alu_done == 1);
+        #10 start = 0;
+        wait (alu_done);
         #20;
-        $display("MUL Result: %d", alu_result);
 
-        // ======== Test DIV (11) ========
-        #50;
-        operand_A = 8'd243;
-        operand_B = 8'd22;
+        // ========== Test DIV (Non-restoring Division) ==========
+        operand_A = 8'd40;
+        operand_B = 8'd6;
         op_code = 2'b11; // DIV
         start = 1;
-        #10;
-        start = 0;
-
-        wait (alu_done == 1);
+        #10 start = 0;
+        wait (alu_done);
         #20;
-        $display("DIV Result (Remainder<<8 | Quotient): 0x%h", alu_result);
-        $display("-> Quotient: %d", alu_result[7:0]);
-        $display("-> Remainder: %d", alu_result[15:8]);
 
-        // Finish simulation
-        #100;
-        $finish;
+        $display("All tests finished.");
+        $stop;
     end
 
 endmodule
