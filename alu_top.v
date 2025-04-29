@@ -1,4 +1,4 @@
-module alu_top (
+/*module alu_top (
     input wire clk,
     input wire reset,
     input wire start,
@@ -102,7 +102,137 @@ module alu_top (
         .out(alu_result)
     );
 
+endmodule*/
+
+module alu_top (
+    input wire clk,
+    input wire reset,
+    input wire start,
+    input wire [1:0] op_code,
+    input wire [7:0] operand_A,
+    input wire [7:0] operand_B,
+    output wire [15:0] alu_result,
+    output wire alu_done
+);
+
+    // Internal wires
+    wire adder_en;
+    wire subtractor_en;
+    wire booth_load, booth_add_en, booth_sub_en, booth_shift_en, booth_count_en;
+    wire divider_load, divider_add_en, divider_sub_en, divider_shift_en, divider_count_en, divider_final_add;
+
+    wire [15:0] booth_product;
+    wire [7:0] divider_quotient;
+    wire [7:0] divider_remainder;
+
+    wire [7:0] add_sub_result;
+    wire [15:0] add_sub_result_extended;
+    wire [15:0] div_concat_result;
+    wire [3:0] mux_sel;
+
+    wire [1:0] booth_bits;             // {Q[0], Q-1}
+    wire booth_counter_done;
+    wire divider_sign_R;
+    wire divider_counter_done;
+
+    wire [16:0] booth_reg_data;
+    wire [15:0] divider_reg_data;
+
+
+
+    // Create flattened input bus for mux
+    wire [4*16-1:0] result_options;
+
+    // ========== CONTROL UNIT ==========
+    control_unit control_unit_inst (
+        .clk(clk),
+        .reset(reset),
+        .start(start),
+        .op_code(op_code),
+        .booth_bits(booth_bits),
+        .booth_counter_done(booth_counter_done),
+        .divider_sign_R(divider_sign_R),
+        .divider_counter_done(divider_counter_done),
+        .adder_en(adder_en),
+        .subtractor_en(subtractor_en),
+        .booth_load(booth_load),
+        .booth_add_en(booth_add_en),
+        .booth_sub_en(booth_sub_en),
+        .booth_shift_en(booth_shift_en),
+        .booth_count_en(booth_count_en),
+        .divider_load(divider_load),
+        .divider_add_en(divider_add_en),
+        .divider_sub_en(divider_sub_en),
+        .divider_shift_en(divider_shift_en),
+        .divider_count_en(divider_count_en),
+        .divider_final_add(divider_final_add),
+        .alu_done(alu_done)
+    );
+
+    // ========== Booth Datapath ==========
+    booth booth_datapath (
+        .clk(clk),
+        .reset(reset),
+        .load(booth_load),
+        .shift_en(booth_shift_en),
+        .add_en(booth_add_en),
+        .sub_en(booth_sub_en),
+        .count_en(booth_count_en),
+        .multiplicand(operand_A),
+        .multiplier(operand_B),
+        .product(booth_product),
+        .done(booth_counter_done),
+        //.reg_data({booth_bits, booth_product[14:0]}) // {Q0, Q-1, rest of product} (adapt reg_data slicing if needed)
+	.reg_data(booth_reg_data)
+    );
+
+    // ========== Divider Datapath ==========
+    divider divider_datapath (
+        .clk(clk),
+        .reset(reset),
+        .load(divider_load),
+        .shift_en(divider_shift_en),
+        .add_en(divider_add_en),
+        .sub_en(divider_sub_en),
+        .final_add(divider_final_add),
+        .count_en(divider_count_en),
+        .dividend(operand_A),
+        .divisor(operand_B),
+        .quotient(divider_quotient),
+        .remainder(divider_remainder),
+        .done(divider_counter_done),
+        //.reg_data({divider_sign_R, divider_remainder, divider_quotient[6:0]}) // {Sign R, R[7:0], Q[7:1]}
+	.reg_data(divider_reg_data)
+    );
+
+    // ========== ADD/SUB ==========
+    add_sub #(8) add_sub_inst (
+        .a(operand_A),
+        .b(operand_B),
+        .sub(op_code[0]), // sub=0 for ADD, sub=1 for SUB
+        .sum(add_sub_result)
+    );
+
+    assign booth_bits = booth_reg_data[1:0];
+    assign divider_sign_R = divider_reg_data[15]; // R MSB
+
+    assign add_sub_result_extended = {8'b0, add_sub_result};
+    assign div_concat_result = {divider_remainder, divider_quotient};
+
+    assign result_options = {div_concat_result, booth_product, add_sub_result_extended, add_sub_result_extended};
+
+    // ========== MUX for selecting result ==========
+    mux #(
+        .WIDTH(16),
+        .N(4)
+    ) result_mux (
+        .in(result_options),
+        .sel(op_code),
+        .out(alu_result)
+    );
+
 endmodule
+
 
 `timescale 1ns / 1ps
 
