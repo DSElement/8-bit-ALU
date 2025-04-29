@@ -26,3 +26,4 @@ vsim -voptargs=+acc $topmodule
 
 run -all
 quit -sim
+

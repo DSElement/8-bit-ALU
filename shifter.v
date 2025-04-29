@@ -3,15 +3,38 @@ module shifter #(parameter WIDTH = 17) (
     input wire direction,  // 0 for right shift, 1 for left shift
     output wire [WIDTH-1:0] out
 );
-    // Right arithmetic shift: sign-extend MSB
-    wire [WIDTH-1:0] right_shift = {in[WIDTH-1], in[WIDTH-1:1]};
-    
-    // Left shift: shift in 0 at LSB
-    wire [WIDTH-1:0] left_shift = {in[WIDTH-2:0], 1'b0};
-    
-    // Select output based on direction
-    assign out = direction ? left_shift : right_shift;
+
+    wire [WIDTH-1:0] left_shift;
+    wire [WIDTH-1:0] right_shift;
+    wire n_direction;
+
+    not (n_direction, direction);
+
+    // Manually assign MSB and LSB edge conditions
+    assign right_shift[WIDTH-1] = in[WIDTH-1]; // MSB sign-extend
+    assign left_shift[0] = 1'b0;                // LSB zero insert
+
+    // Generate for internal bits
+    genvar i;
+    generate
+        for (i = 0; i < WIDTH-1; i = i + 1) begin : right_loop
+            assign right_shift[i] = in[i+1];
+        end
+
+        for (i = 1; i < WIDTH; i = i + 1) begin : left_loop
+            assign left_shift[i] = in[i-1];
+        end
+
+        for (i = 0; i < WIDTH; i = i + 1) begin : mux_loop
+            wire left_and_dir, right_and_ndir;
+            and (left_and_dir, left_shift[i], direction);
+            and (right_and_ndir, right_shift[i], n_direction);
+            or  (out[i], left_and_dir, right_and_ndir);
+        end
+    endgenerate
+
 endmodule
+
 
 `timescale 1ns/1ps
 

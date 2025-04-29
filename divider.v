@@ -12,52 +12,69 @@ module divider (
     output wire [7:0] quotient,
     output wire [7:0] remainder,
     output wire done,
-    output wire [15:0] reg_data // <-- NEW output
+    output wire [15:0] reg_data
 );
 
     wire [15:0] internal_reg_data;
     wire [15:0] shifted_data;
     wire [7:0] addsub_result;
-    wire [2:0] count;
-    wire [7:0] R, Q;
-    //wire sign_R;
     wire [15:0] final_corrected_data;
+    wire [2:0] count;
 
     wire sign_rem;
-    assign sign_rem = internal_reg_data[15]; // MSB of R (R[7])
+    wire [15:0] load_value;
+    //wire [15:0] addsub_concat;
+    wire [15:0] selected_shift;
+    wire [15:0] selected_addsub;
+    wire [15:0] selected_load;
+    wire [15:0] selected_final_add;
+    wire [15:0] selected_reset;
+
+    wire nreset, nload, nadd_en, nsub_en, nshift_en, nfinal_add;
+
+    // Wires
+    assign load_value = {8'b0, dividend};
+    assign sign_rem = internal_reg_data[15];
+    //assign addsub_concat = {addsub_result, internal_reg_data[7:1], ~addsub_result[7]};
+wire [15:0] addsub_concat;
+wire naddsub7;
+
+not (naddsub7, addsub_result[7]);
+
+assign addsub_concat[15:8] = addsub_result[7:0];
+assign addsub_concat[7:1] = internal_reg_data[7:1];
+assign addsub_concat[0] = naddsub7;
 
 
-    // Split reg_data
-    assign R = internal_reg_data[15:8];
-    assign Q = internal_reg_data[7:0];
-    //assign sign_R = internal_reg_data[16];
+    not (nreset, reset);
+    not (nload, load);
+    not (nadd_en, add_en);
+    not (nsub_en, sub_en);
+    not (nshift_en, shift_en);
+    not (nfinal_add, final_add);
 
-    // Load value (R = 0, Q = dividend)
-    wire [15:0] load_value = {8'b0, dividend};
-
-    // Parallel adder/subtractor
+    // Adder/subtracter for main work
     add_sub #(8) addsub_inst (
-        .a(R),
+        .a(internal_reg_data[15:8]),
         .b(divisor),
         .sub(sub_en),
         .sum(addsub_result)
     );
 
-    // Final correction adder (R + Divisor if final correction needed)
+    // Adder for final correction
     add_sub #(8) final_addsub_inst (
-        .a(R),
+        .a(internal_reg_data[15:8]),
         .b(divisor),
         .sub(1'b0),
         .sum(final_corrected_data[15:8])
     );
 
-    // Assign lower bits unchanged for final correction
-    assign final_corrected_data[7:0] = internal_reg_data[7:0];
+    assign final_corrected_data[7:0] = internal_reg_data[7:0]; // Hardwire low bits
 
-    // Unified shifter for left shift
+    // Shifter for left shift
     shifter #(16) shifter_inst (
         .in(internal_reg_data),
-        .direction(1'b1),
+        .direction(1'b1), // left shift
         .out(shifted_data)
     );
 
@@ -69,28 +86,53 @@ module divider (
         .count(count)
     );
 
-    // Main working register logic
-    wire [15:0] next_reg_data;
-    assign next_reg_data = reset ? 16'b0 :
-			   load        ? load_value :
-                           (add_en | sub_en) ? {addsub_result, internal_reg_data[7:1], ~addsub_result[7]} :
-                           shift_en    ? shifted_data :
-                           (final_add && sign_rem)   ? final_corrected_data :
-                           internal_reg_data;
+    // ========== next_reg_data MUX Chain ==========
 
+    genvar i;
+    generate
+        for (i = 0; i < 16; i = i + 1) begin : mux_chain
+
+            wire shift_path, hold_path;
+            and (shift_path, shifted_data[i], shift_en);
+            and (hold_path, internal_reg_data[i], nshift_en);
+            or (selected_shift[i], shift_path, hold_path);
+
+            wire addsub_path, shift_hold_path;
+            and (addsub_path, addsub_concat[i], (add_en | sub_en));
+            and (shift_hold_path, selected_shift[i], ~(add_en | sub_en));
+            or (selected_addsub[i], addsub_path, shift_hold_path);
+
+            wire load_path, addsub_shift_path;
+            and (load_path, load_value[i], load);
+            and (addsub_shift_path, selected_addsub[i], nload);
+            or (selected_load[i], load_path, addsub_shift_path);
+
+            wire final_path, load_addsub_shift_path;
+            and (final_path, final_corrected_data[i], final_add & sign_rem);
+            and (load_addsub_shift_path, selected_load[i], ~(final_add & sign_rem));
+            or (selected_final_add[i], final_path, load_addsub_shift_path);
+
+            wire reset_zero, normal_path;
+            and (reset_zero, 1'b0, reset); // forced zero
+            and (normal_path, selected_final_add[i], nreset);
+            or (selected_reset[i], reset_zero, normal_path);
+        end
+    endgenerate
+
+    // Register
     register #(16) reg_RQ (
         .clk(clk),
-        .d(next_reg_data),
+        .d(selected_reset),
         .q(internal_reg_data)
     );
 
-    assign quotient = Q;
-    assign remainder = R;
+    assign quotient = internal_reg_data[7:0];
+    assign remainder = internal_reg_data[15:8];
     assign done = (count == 3'b111);
-
-    assign reg_data = internal_reg_data; // <-- expose reg_data outside
+    assign reg_data = internal_reg_data;
 
 endmodule
+
 
 /*`timescale 1ns/1ps
 

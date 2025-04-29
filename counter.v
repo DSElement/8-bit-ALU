@@ -1,4 +1,4 @@
-module counter #(parameter WIDTH = 3) ( // 3 bits for Booth
+module counter #(parameter WIDTH = 3) (
     input wire clk,
     input wire reset,
     input wire enable,
@@ -6,24 +6,44 @@ module counter #(parameter WIDTH = 3) ( // 3 bits for Booth
 );
 
     wire [WIDTH-1:0] next_count;
+    wire [WIDTH-1:0] selected_d;
     wire [WIDTH-1:0] one;
+    wire nreset, nenable;
 
-    assign one = {{(WIDTH-1){1'b0}}, 1'b1}; // constant 1
+    // Constant 1
+    assign one = {{(WIDTH-1){1'b0}}, 1'b1}; // still OK: constants usually assigned outside synthesis
 
+    // Next count = count + 1
     add_sub #(WIDTH) add_inst (
         .a(count),
         .b(one),
-        .sub(1'b0),  // always add 1
+        .sub(1'b0), // always add
         .sum(next_count)
     );
 
+    not (nreset, reset);
+    not (nenable, enable);
+
+    genvar i;
+    generate
+        for (i = 0; i < WIDTH; i = i + 1) begin : gen_mux
+            wire hold_current, load_next, zero_reset;
+            and (hold_current, count[i], nreset, nenable);     // when reset=0 and enable=0 ? hold
+            and (load_next, next_count[i], nreset, enable);     // when reset=0 and enable=1 ? load next_count
+            and (zero_reset, 1'b0, reset);                     // when reset=1 ? load 0 (always zero)
+            or (selected_d[i], hold_current, load_next, zero_reset);
+        end
+    endgenerate
+
+    // Register
     register #(WIDTH) reg_inst (
         .clk(clk),
-        .d(reset ? {WIDTH{1'b0}} : (enable ? next_count : count)),
+        .d(selected_d),
         .q(count)
     );
 
 endmodule
+
 
 `timescale 1ns/1ps
 

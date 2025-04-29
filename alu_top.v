@@ -282,8 +282,8 @@ module alu_top_tb;
 
         // ======== Test ADD (00) ========
         #10;
-        operand_A = 8'd20;
-        operand_B = 8'd15;
+        operand_A = 8'd33;
+        operand_B = 8'd25;
         op_code = 2'b00; // ADD
         start = 1;
         #10;
@@ -309,7 +309,7 @@ module alu_top_tb;
 
         // ======== Test MUL (10) ========
         #50;
-        operand_A = 8'd7;
+        operand_A = 8'd69;
         operand_B = 8'd6;
         op_code = 2'b10; // MUL
         start = 1;
@@ -322,8 +322,8 @@ module alu_top_tb;
 
         // ======== Test DIV (11) ========
         #50;
-        operand_A = 8'd200;
-        operand_B = 8'd13;
+        operand_A = 8'd243;
+        operand_B = 8'd22;
         op_code = 2'b11; // DIV
         start = 1;
         #10;

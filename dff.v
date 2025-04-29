@@ -10,12 +10,14 @@ module dff(
     wire s, r;
     wire qm, qmn;
     wire qs, qsn;
-    wire d_reset;   // Data forced to 0 when reset active
+    wire d_reset;
+    wire nreset;
 
     not (nclk, clk);
 
-    // reset forces d_reset = 0
-    assign d_reset = reset ? 1'b0 : d;
+    // reset forces d_reset = 0 using pure gates
+    not (nreset, reset);
+    and (d_reset, d, nreset);
 
     // Master latch (transparent when clk=0)
     nand (s, d_reset, nclk);
@@ -30,6 +32,7 @@ module dff(
     nand (qn, qsn, q);
 
 endmodule
+
 
 
 /*module dff (

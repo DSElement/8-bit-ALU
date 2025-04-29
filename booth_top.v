@@ -90,8 +90,8 @@ module booth_top_tb;
         reset = 0;
 
         // Set multiplicand and multiplier
-        multiplicand = 8'd20;   // 5
-        multiplier   = 8'd16;   // × 3
+        multiplicand = 8'd69;   // 5
+        multiplier   = 8'd6;   // × 3
 
         // Start Booth multiplication
         #10;
