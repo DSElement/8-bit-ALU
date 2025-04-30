@@ -23,7 +23,6 @@ module divider (
 
     wire sign_rem;
     wire [15:0] load_value;
-    //wire [15:0] addsub_concat;
     wire [15:0] selected_shift;
     wire [15:0] selected_addsub;
     wire [15:0] selected_load;
@@ -35,15 +34,14 @@ module divider (
     // Wires
     assign load_value = {8'b0, dividend};
     assign sign_rem = internal_reg_data[15];
-    //assign addsub_concat = {addsub_result, internal_reg_data[7:1], ~addsub_result[7]};
-wire [15:0] addsub_concat;
-wire naddsub7;
+    wire [15:0] addsub_concat;
+    wire naddsub7;
 
-not (naddsub7, addsub_result[7]);
+    not (naddsub7, addsub_result[7]);
 
-assign addsub_concat[15:8] = addsub_result[7:0];
-assign addsub_concat[7:1] = internal_reg_data[7:1];
-assign addsub_concat[0] = naddsub7;
+    assign addsub_concat[15:8] = addsub_result[7:0];
+    assign addsub_concat[7:1] = internal_reg_data[7:1];
+    assign addsub_concat[0] = naddsub7;
 
 
     not (nreset, reset);

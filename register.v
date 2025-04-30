@@ -22,7 +22,7 @@ module register #(parameter WIDTH = 8) (
 endmodule
 
 
-`timescale 1ns/1ps
+/*`timescale 1ns/1ps
 
 module register_tb;
 
@@ -57,4 +57,4 @@ module register_tb;
         $stop;
     end
 
-endmodule
+endmodule*/

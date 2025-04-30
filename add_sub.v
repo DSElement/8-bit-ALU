@@ -15,7 +15,6 @@ module add_sub #(parameter WIDTH = 9) (
     generate
         for (i = 0; i < WIDTH; i = i + 1) begin : gen_adders
             xor (b_xor_sub[i], b[i], sub); // if sub=1, invert b
-	    //assign b_xor_sub[i] = sub ? ~b[i] : b[i];
             full_adder fa (
                 .a(a[i]),
                 .b(b_xor_sub[i]),
@@ -28,7 +27,7 @@ module add_sub #(parameter WIDTH = 9) (
 
 endmodule
 
-`timescale 1ns/1ps
+/*`timescale 1ns/1ps
 
 module add_sub_tb;
 
@@ -56,4 +55,4 @@ module add_sub_tb;
         $stop;
     end
 
-endmodule
+endmodule*/
